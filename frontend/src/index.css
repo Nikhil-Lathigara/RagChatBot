@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* nice gradient helpers */
+.grad-text {
+  background: linear-gradient(90deg, #ff7a18, #ff3d00);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.grad-bg {
+  background: radial-gradient(1200px 600px at 20% -10%, rgba(255,122,24,0.15), transparent 60%),
+              radial-gradient(1000px 500px at 110% 10%, rgba(255,61,0,0.12), transparent 60%);
+}

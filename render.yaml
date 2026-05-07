@@ -1,0 +1,18 @@
+services:
+  - type: web_service
+    name: ragchatbot-backend
+    env: node
+    plan: starter
+    branch: main
+    root: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: QDRANT_URL
+        value: "https://your-qdrant-instance"
+      - key: QDRANT_COLLECTION
+        value: "ragchatbot"
+      - key: QDRANT_DISTANCE
+        value: "Cosine"
+      - key: QDRANT_VECTOR_SIZE
+        value: "4096"
