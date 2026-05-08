@@ -9,7 +9,11 @@ dotenv.config();
 const app = express();
 console.log("Key:", process.env.OPENROUTER_API_KEY);
 
-app.use(cors());
+app.use(cors(
+  {
+    origin: "https://rag-chat-bot-ce7l.vercel.app/"
+  }
+));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
