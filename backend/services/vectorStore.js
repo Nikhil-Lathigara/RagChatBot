@@ -2,11 +2,12 @@ import { QdrantClient } from "@qdrant/qdrant-js";
 import { randomUUID } from "crypto";
 
 const COLLECTION_NAME =
-  process.env.QDRANT_COLLECTION || "rag_vectors";
+  process.env.QDRANT_COLLECTION;
 
 const DISTANCE =
-  process.env.QDRANT_DISTANCE || "Cosine";
+  process.env.QDRANT_DISTANCE;
 
+  console.log("QDRANT_URL =", process.env.QDRANT_URL);
 const client = new QdrantClient({
   url: process.env.QDRANT_URL,
   apiKey: process.env.QDRANT_API_KEY,
@@ -15,11 +16,16 @@ const client = new QdrantClient({
 
 let collectionReadyPromise = null;
 
+/**
+ * Check if collection already exists error
+ */
 function isCollectionAlreadyExistsError(err) {
   if (!err) return false;
 
   const message =
-    `${err?.message || ""} ${err?.data?.status?.error || ""}`.toLowerCase();
+    `${err?.message || ""} ${
+      err?.data?.status?.error || ""
+    }`.toLowerCase();
 
   return (
     err?.status === 409 ||
@@ -27,6 +33,9 @@ function isCollectionAlreadyExistsError(err) {
   );
 }
 
+/**
+ * Ensure collection + payload index exist
+ */
 async function ensureCollectionExists(vectorSize) {
   // Prevent parallel initialization
   if (collectionReadyPromise) {
@@ -35,80 +44,129 @@ async function ensureCollectionExists(vectorSize) {
 
   collectionReadyPromise = (async () => {
     try {
-      const existing =
-        await client.getCollection(COLLECTION_NAME);
-
-      const currentSize =
-        existing.config.params.vectors.size;
-
-      if (currentSize !== vectorSize) {
-        console.log(
-          "⚠️ Vector size mismatch. Recreating collection..."
-        );
-
-        await client.deleteCollection(COLLECTION_NAME);
-
-        await client.createCollection(COLLECTION_NAME, {
-          vectors: {
-            size: vectorSize,
-            distance: DISTANCE,
-          },
-        });
-
-        await client.createPayloadIndex(COLLECTION_NAME, {
-  field_name: "sessionId",
-  field_schema: "keyword",
-});
-
-        console.log("✅ Collection recreated");
-      } else {
-        console.log("✅ Collection already exists");
-      }
-    } catch (err) {
-      // Only create if collection truly does not exist
-      const isNotFound =
-        err?.status === 404 ||
-        `${err?.message || ""}`.includes("Not found");
-
-      if (!isNotFound) {
-        throw err;
-      }
+      let recreateCollection = false;
 
       try {
-        await client.createCollection(COLLECTION_NAME, {
-          vectors: {
-            size: vectorSize,
-            distance: DISTANCE,
-          },
-        });
+        const existing =
+          await client.getCollection(COLLECTION_NAME);
 
-        console.log("✅ Collection created");
-      } catch (createErr) {
-        // Ignore race-condition conflicts
-        if (!isCollectionAlreadyExistsError(createErr)) {
-          throw createErr;
+        const currentSize =
+          existing.config.params.vectors.size;
+
+        if (currentSize !== vectorSize) {
+          console.log(
+            "⚠️ Vector size mismatch. Recreating collection..."
+          );
+
+          recreateCollection = true;
+        } else {
+          console.log(
+            "✅ Collection already exists"
+          );
         }
+      } catch (err) {
+        const isNotFound =
+          err?.status === 404 ||
+          `${err?.message || ""}`.includes(
+            "Not found"
+          );
+
+        if (isNotFound) {
+          recreateCollection = true;
+        } else {
+          throw err;
+        }
+      }
+
+      // Recreate collection if needed
+      if (recreateCollection) {
+        try {
+          // Delete old collection if exists
+          try {
+            await client.deleteCollection(
+              COLLECTION_NAME
+            );
+          } catch (_) {}
+
+          // Create collection
+          await client.createCollection(
+            COLLECTION_NAME,
+            {
+              vectors: {
+                size: vectorSize,
+                distance: DISTANCE,
+              },
+            }
+          );
+
+          console.log("✅ Collection created");
+        } catch (createErr) {
+          if (
+            !isCollectionAlreadyExistsError(
+              createErr
+            )
+          ) {
+            throw createErr;
+          }
+
+          console.log(
+            "⚠️ Collection already exists"
+          );
+        }
+      }
+
+      /**
+       * ALWAYS ensure payload index exists
+       */
+      try {
+        await client.createPayloadIndex(
+          COLLECTION_NAME,
+          {
+            field_name: "sessionId",
+            field_schema: "keyword",
+          }
+        );
 
         console.log(
-          "⚠️ Collection already created by another process"
+          "✅ sessionId payload index created"
+        );
+      } catch (indexErr) {
+        console.log(
+          "⚠️ sessionId index already exists"
         );
       }
+    } catch (err) {
+      console.error(
+        "❌ Qdrant initialization failed:",
+        err
+      );
+
+      collectionReadyPromise = null;
+
+      throw err;
     }
   })();
 
   return collectionReadyPromise;
 }
 
-export async function initializeVectorStore(vectorSize) {
+/**
+ * Initialize vector store
+ */
+export async function initializeVectorStore(
+  vectorSize
+) {
   await ensureCollectionExists(vectorSize);
 }
 
+/**
+ * Store embedding
+ */
 export async function storeEmbedding(
   sessionId,
   vector,
-  metadata
+  metadata = {}
 ) {
-  // Ensure collection exists before upsert
   await ensureCollectionExists(vector.length);
 
   await client.upsert(COLLECTION_NAME, {
@@ -126,27 +184,35 @@ export async function storeEmbedding(
   });
 }
 
+/**
+ * Search embeddings
+ */
 export async function searchEmbedding(
   sessionId,
   vector
 ) {
-  const result = await client.search(COLLECTION_NAME, {
-    vector,
-    filter: sessionId
-      ? {
-          must: [
-            {
-              key: "sessionId",
-              match: {
-                value: sessionId,
+  await ensureCollectionExists(vector.length);
+
+  const result = await client.search(
+    COLLECTION_NAME,
+    {
+      vector,
+      filter: sessionId
+        ? {
+            must: [
+              {
+                key: "sessionId",
+                match: {
+                  value: sessionId,
+                },
               },
-            },
-          ],
-        }
-      : undefined,
-    limit: 5,
-    with_payload: true,
-  });
+            ],
+          }
+        : undefined,
+      limit: 5,
+      with_payload: true,
+    }
+  );
 
   return result
     .map((r) => r.payload?.text)
