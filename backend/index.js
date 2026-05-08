@@ -11,7 +11,7 @@ console.log("Key:", process.env.OPENROUTER_API_KEY);
 
 app.use(cors(
   {
-    origin: "https://rag-chat-bot-ce7l.vercel.app/"
+    origin: "https://rag-chat-bot-ce7l.vercel.app"
   }
 ));
 app.use(express.json());
