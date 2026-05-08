@@ -55,6 +55,11 @@ async function ensureCollectionExists(vectorSize) {
           },
         });
 
+        await client.createPayloadIndex(COLLECTION_NAME, {
+  field_name: "sessionId",
+  field_schema: "keyword",
+});
+
         console.log("✅ Collection recreated");
       } else {
         console.log("✅ Collection already exists");
