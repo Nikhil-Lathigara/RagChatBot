@@ -1,144 +1,66 @@
-import { QdrantClient } from "@qdrant/qdrant-js";
-import { randomUUID } from "crypto";
+import { QdrantClient } from "@qdrant/js-client-rest";
 
-const COLLECTION_NAME =
-  process.env.QDRANT_COLLECTION || "rag_vectors";
+const COLLECTION_NAME = "rag-chatbot";
 
-const DISTANCE =
-  process.env.QDRANT_DISTANCE || "Cosine";
-
-const client = new QdrantClient({
-  url: process.env.QDRANT_URL || "http://localhost:6333",
-  apiKey: process.env.QDRANT_API_KEY || undefined,
+export const client = new QdrantClient({
+  url: process.env.QDRANT_URL,
+  apiKey: process.env.QDRANT_API_KEY,
+  checkCompatibility: false,
 });
 
-let collectionReadyPromise = null;
+let initialized = false;
 
-function isCollectionAlreadyExistsError(err) {
-  if (!err) return false;
+export async function ensureCollection() {
+  if (initialized) return;
 
-  const message =
-    `${err?.message || ""} ${err?.data?.status?.error || ""}`.toLowerCase();
+  try {
+    const collections = await client.getCollections();
 
-  return (
-    err?.status === 409 ||
-    message.includes("already exists")
-  );
-}
+    const exists = collections.collections.some(
+      (collection) => collection.name === COLLECTION_NAME
+    );
 
-async function ensureCollectionExists(vectorSize) {
-  // Prevent parallel initialization
-  if (collectionReadyPromise) {
-    return collectionReadyPromise;
-  }
+    if (!exists) {
+      console.log("Creating collection:", COLLECTION_NAME);
 
-  collectionReadyPromise = (async () => {
-    try {
-      const existing =
-        await client.getCollection(COLLECTION_NAME);
+      await client.createCollection(COLLECTION_NAME, {
+        vectors: {
+          size: parseInt(process.env.QDRANT_VECTOR_SIZE),
+          distance: process.env.QDRANT_DISTANCE,
+        },
+      });
 
-      const currentSize =
-        existing.config.params.vectors.size;
-
-      if (currentSize !== vectorSize) {
-        console.log(
-          "⚠️ Vector size mismatch. Recreating collection..."
-        );
-
-        await client.deleteCollection(COLLECTION_NAME);
-
-        await client.createCollection(COLLECTION_NAME, {
-          vectors: {
-            size: vectorSize,
-            distance: DISTANCE,
-          },
-        });
-
-        console.log("✅ Collection recreated");
-      } else {
-        console.log("✅ Collection already exists");
-      }
-    } catch (err) {
-      // Only create if collection truly does not exist
-      const isNotFound =
-        err?.status === 404 ||
-        `${err?.message || ""}`.includes("Not found");
-
-      if (!isNotFound) {
-        throw err;
-      }
-
-      try {
-        await client.createCollection(COLLECTION_NAME, {
-          vectors: {
-            size: vectorSize,
-            distance: DISTANCE,
-          },
-        });
-
-        console.log("✅ Collection created");
-      } catch (createErr) {
-        // Ignore race-condition conflicts
-        if (!isCollectionAlreadyExistsError(createErr)) {
-          throw createErr;
-        }
-
-        console.log(
-          "⚠️ Collection already created by another process"
-        );
-      }
+      console.log("Collection created successfully");
+    } else {
+      console.log("Collection already exists");
     }
-  })();
 
-  return collectionReadyPromise;
+    initialized = true;
+  } catch (error) {
+    console.error("Collection initialization failed:", error);
+    throw error;
+  }
 }
 
-export async function initializeVectorStore(vectorSize) {
-  await ensureCollectionExists(vectorSize);
-}
+export async function storeEmbedding({
+  id,
+  embedding,
+  text,
+  metadata = {},
+}) {
+  await ensureCollection();
 
-export async function storeEmbedding(
-  sessionId,
-  vector,
-  metadata
-) {
-  await client.upsert(COLLECTION_NAME, {
+  return await client.upsert(COLLECTION_NAME, {
+    wait: true,
     points: [
       {
-        id: randomUUID(),
-        vector,
+        id,
+        vector: embedding,
         payload: {
-          sessionId,
+          text,
           ...metadata,
         },
       },
     ],
   });
-}
-
-export async function searchEmbedding(
-  sessionId,
-  vector
-) {
-  const result = await client.search(COLLECTION_NAME, {
-    vector,
-    filter: sessionId
-      ? {
-          must: [
-            {
-              key: "sessionId",
-              match: {
-                value: sessionId,
-              },
-            },
-          ],
-        }
-      : undefined,
-    limit: 5,
-    with_payload: true,
-  });
-
-  return result
-    .map((r) => r.payload?.text)
-    .filter(Boolean);
 }
