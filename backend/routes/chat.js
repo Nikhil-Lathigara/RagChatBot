@@ -9,8 +9,8 @@ dotenv.config();
 const router = express.Router();
 
 const openai = new OpenAI({
-  apiKey: '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',
-  baseURL: 'https://integrate.api.nvidia.com/v1',
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://integrate.api.nvidia.com/v1",
 });
 
 const CHAT_MODEL = "z-ai/glm4.7";
@@ -32,7 +32,9 @@ function toContextText(chunks, manualContext) {
     .map((chunk) => String(chunk || "").trim())
     .filter(Boolean);
 
-  const sections = normalizedChunks.map((chunk, index) => `[Chunk ${index + 1}]\n${chunk}`);
+  const sections = normalizedChunks.map(
+    (chunk, index) => `[Chunk ${index + 1}]\n${chunk}`,
+  );
 
   const extra = String(manualContext || "").trim();
   if (extra) {
@@ -70,28 +72,39 @@ router.post("/chat", async (req, res) => {
     if (!context) {
       const fallback =
         "I could not find indexed context for this session yet. Please upload a PDF/URL first, then ask again.";
-      return res.json({ success: true, answer: fallback, reply: fallback, contextChunks: 0 });
+      return res.json({
+        success: true,
+        answer: fallback,
+        reply: fallback,
+        contextChunks: 0,
+      });
     }
 
-    const formattedMessages = await ragPrompt.formatMessages({ context, query });
+    const formattedMessages = await ragPrompt.formatMessages({
+      context,
+      query,
+    });
     const messages = formattedMessages.map((msg) => ({
       role: mapLangChainRoleToOpenAI(msg.getType()),
-      content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
+      content:
+        typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content),
     }));
 
     const result = await openai.chat.completions.create({
       model: CHAT_MODEL,
       temperature: 0.2,
       messages,
-      max_tokens: 16384,
-          chat_template_kwargs: {"enable_thinking":true,"clear_thinking":false},
-    stream: true
+      max_tokens: 4096,
+      chat_template_kwargs: {
+        enable_thinking: true,
+        clear_thinking: false,
+      },
     });
 
     const responseText =
-      result?.choices[0]?.delta?.reasoning_content ||
-      "No response generated.";
-
+      result?.choices?.[0]?.message?.content || "No response generated.";
     // Return both legacy keys and a `reply` key the frontend expects
     res.json({
       success: true,
